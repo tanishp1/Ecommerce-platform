@@ -8,12 +8,33 @@ const API_URL = (() => {
     return normalized.endsWith('/api') ? normalized : `${normalized}/api`;
   }
 
-  if (typeof window !== 'undefined' && ['localhost', '127.0.0.1'].includes(window.location.hostname)) {
-    return 'http://localhost:5000/api';
-  }
-
   return '/api';
 })();
+
+async function fetchJson(url, options = {}) {
+  try {
+    const response = await fetch(url, options);
+    const rawText = await response.text();
+
+    let payload = {};
+    if (rawText) {
+      try {
+        payload = JSON.parse(rawText);
+      } catch (error) {
+        throw new Error(rawText.slice(0, 180) || 'Invalid response from the server.');
+      }
+    }
+
+    if (!response.ok) {
+      throw new Error(payload.message || 'Request failed.');
+    }
+
+    return payload;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Request failed.';
+    throw new Error(message);
+  }
+}
 
 function App() {
   const [products, setProducts] = useState([]);
@@ -25,7 +46,22 @@ function App() {
     return storedUser ? JSON.parse(storedUser) : null;
   });
   const [token, setToken] = useState(() => localStorage.getItem('ecommerce-token') || '');
-  const [message, setMessage] = useState('');
+  const [toast, setToast] = useState({ visible: false, type: 'success', message: '' });
+  const [paymentModal, setPaymentModal] = useState({ open: false, checkoutUrl: '', items: [], total: 0 });
+
+  const showToast = (message, type = 'success') => {
+    setToast({ visible: true, type, message });
+  };
+
+  useEffect(() => {
+    if (!toast.visible) return undefined;
+
+    const timer = window.setTimeout(() => {
+      setToast((current) => ({ ...current, visible: false }));
+    }, 3200);
+
+    return () => window.clearTimeout(timer);
+  }, [toast.visible]);
   const categories = ['Audio', 'Wearables', 'Home', 'Travel'];
   const fallbackProducts = [
     {
@@ -73,12 +109,7 @@ function App() {
   useEffect(() => {
     const fetchProducts = async () => {
       try {
-        const response = await fetch(`${API_URL}/products`);
-        if (!response.ok) {
-          throw new Error('Unable to load products.');
-        }
-
-        const data = await response.json();
+        const data = await fetchJson(`${API_URL}/products`);
         setProducts(Array.isArray(data) && data.length ? data : fallbackProducts);
       } catch (error) {
         console.error('Failed to load products:', error);
@@ -145,73 +176,101 @@ function App() {
           ? authForm
           : { email: authForm.email, password: authForm.password };
 
-      const response = await fetch(`${API_URL}${endpoint}`, {
+      const data = await fetchJson(`${API_URL}${endpoint}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload)
       });
 
-      const data = await response.json();
-
-      if (!response.ok) {
-        throw new Error(data.message || 'Authentication failed.');
-      }
-
       setUser(data.user);
       setToken(data.token);
-      setMessage(
+      showToast(
         authMode === 'register'
           ? 'Welcome! Your account was created successfully.'
-          : 'Login successful. Your storefront is ready.'
+          : 'Login successful. Your storefront is ready.',
+        'success'
       );
       setAuthForm({ name: '', email: '', password: '' });
     } catch (error) {
-      setMessage(error.message || 'Something went wrong while signing in.');
+      showToast(error.message || 'Something went wrong while signing in.', 'error');
     }
   };
 
-  const handleCheckout = async () => {
-    if (!cart.length) {
-      setMessage('Add a product to your cart before checking out.');
+  const handleCheckout = async (customCart = cart) => {
+    if (!customCart.length) {
+      showToast('Your cart is empty. Add a few essentials before checking out.', 'error');
+      document.getElementById('catalog')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
       return;
     }
 
     try {
-      const response = await fetch(`${API_URL}/checkout`, {
+      const data = await fetchJson(`${API_URL}/checkout`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          cart,
+          cart: customCart,
           email: user?.email || 'guest@example.com'
         })
       });
 
-      const data = await response.json();
+      const checkoutUrl = data.checkoutUrl || 'https://example.com/demo-checkout';
+      const total = customCart.reduce((sum, item) => sum + item.price * item.quantity, 0);
 
-      if (!response.ok) {
-        throw new Error(data.message || 'Checkout failed.');
-      }
+      setPaymentModal({
+        open: true,
+        checkoutUrl,
+        items: customCart,
+        total
+      });
 
-      setMessage(
+      const checkoutMessage =
         data.checkoutUrl && data.checkoutUrl.includes('stripe')
-          ? 'Checkout started successfully. Redirecting to Stripe.'
-          : 'Demo checkout completed successfully.'
-      );
+          ? 'Secure Stripe checkout is ready.'
+          : `Demo checkout is ready for ${customCart.length} item${customCart.length > 1 ? 's' : ''}.`;
 
-      if (data.checkoutUrl && data.checkoutUrl.includes('stripe')) {
-        window.location.href = data.checkoutUrl;
-      }
-
-      setCart([]);
+      showToast(checkoutMessage, 'success');
     } catch (error) {
-      setMessage(error.message || 'Unable to complete checkout.');
+      showToast(error.message || 'Unable to complete checkout.', 'error');
     }
+  };
+
+  const closePaymentModal = () => setPaymentModal({ open: false, checkoutUrl: '', items: [], total: 0 });
+
+  const handleBuyNow = async (product) => {
+    const singleItemCart = [{ ...product, quantity: 1 }];
+    await handleCheckout(singleItemCart);
+  };
+
+  const confirmPayment = () => {
+    if (!paymentModal.checkoutUrl) {
+      closePaymentModal();
+      return;
+    }
+
+    const paymentUrl = paymentModal.checkoutUrl;
+    setCart([]);
+    closePaymentModal();
+    window.open(paymentUrl, '_blank', 'noopener,noreferrer');
+    showToast(
+      paymentUrl.includes('stripe')
+        ? 'Stripe payment scanner opened successfully.'
+        : 'Demo payment opened successfully.',
+      'success'
+    );
   };
 
   const logout = () => {
     setUser(null);
     setToken('');
-    setMessage('You have been signed out.');
+    showToast('You have been signed out.', 'success');
+  };
+
+  const openAuthPanel = (mode = 'login') => {
+    setAuthMode(mode);
+    setToast((current) => ({ ...current, visible: false }));
+    requestAnimationFrame(() => {
+      document.getElementById('auth-panel')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    });
   };
 
   return (
@@ -236,10 +295,10 @@ function App() {
           ) : (
             <button
               className="secondary-button"
-              onClick={() => setAuthMode('login')}
+              onClick={() => openAuthPanel('login')}
               type="button"
             >
-              Login
+              Account
             </button>
           )}
         </div>
@@ -258,8 +317,14 @@ function App() {
               <a href="#catalog" className="primary-button">
                 Shop now
               </a>
-              <button className="ghost-button" type="button" onClick={handleCheckout}>
-                Go to checkout
+              <button
+                className="ghost-button"
+                type="button"
+                onClick={handleCheckout}
+                disabled={!cart.length}
+                aria-disabled={!cart.length}
+              >
+                {cart.length ? 'Go to checkout' : 'Checkout'}
               </button>
             </div>
             <ul className="stat-list">
@@ -333,10 +398,28 @@ function App() {
                     <h3>{product.name}</h3>
                     <p>{product.description}</p>
                     <div className="product-footer">
-                      <strong>${product.price}</strong>
-                      <button type="button" onClick={() => addToCart(product)}>
-                        Add to cart
-                      </button>
+                      <strong
+                        className="product-price"
+                        onClick={() => handleBuyNow(product)}
+                        role="button"
+                        tabIndex={0}
+                        onKeyDown={(event) => {
+                          if (event.key === 'Enter' || event.key === ' ') {
+                            event.preventDefault();
+                            handleBuyNow(product);
+                          }
+                        }}
+                      >
+                        ${product.price}
+                      </strong>
+                      <div className="product-actions">
+                        <button type="button" onClick={() => addToCart(product)}>
+                          Add to cart
+                        </button>
+                        <button type="button" className="buy-now-button" onClick={() => handleBuyNow(product)}>
+                          Buy now
+                        </button>
+                      </div>
                     </div>
                   </div>
                 </article>
@@ -387,7 +470,13 @@ function App() {
                   </div>
                 </div>
 
-                <button type="button" className="primary-button checkout-button" onClick={handleCheckout}>
+                <button
+                  type="button"
+                  className="primary-button checkout-button"
+                  onClick={handleCheckout}
+                  disabled={!cart.length}
+                  aria-disabled={!cart.length}
+                >
                   Proceed to checkout
                 </button>
               </>
@@ -399,7 +488,7 @@ function App() {
           </aside>
         </section>
 
-        <section className="auth-panel">
+        <section className="auth-panel" id="auth-panel">
           <div className="auth-copy">
             <span className="eyebrow">Member perks</span>
             <h2>Save favorites, track orders, and shop faster.</h2>
@@ -410,14 +499,14 @@ function App() {
               <button
                 type="button"
                 className={authMode === 'login' ? 'active' : ''}
-                onClick={() => setAuthMode('login')}
+                onClick={() => openAuthPanel('login')}
               >
                 Login
               </button>
               <button
                 type="button"
                 className={authMode === 'register' ? 'active' : ''}
-                onClick={() => setAuthMode('register')}
+                onClick={() => openAuthPanel('register')}
               >
                 Register
               </button>
@@ -463,14 +552,52 @@ function App() {
               />
             </label>
 
-            <button type="submit" className="primary-button auth-button">
+                  <button type="submit" className="primary-button auth-button">
               {authMode === 'login' ? 'Login' : 'Create account'}
             </button>
           </form>
         </section>
 
-        {message && <p className="status-message">{message}</p>}
+        {toast.visible && (
+          <div className={`status-message toast-${toast.type}`}>{toast.message}</div>
+        )}
       </main>
+
+      {paymentModal.open && (
+        <div className="payment-modal-backdrop" onClick={closePaymentModal}>
+          <div className="payment-modal" onClick={(event) => event.stopPropagation()}>
+            <div className="payment-modal-header">
+              <div>
+                <span className="eyebrow">Secure checkout</span>
+                <h3>Stripe payment scanner</h3>
+              </div>
+              <button type="button" className="close-modal" onClick={closePaymentModal}>
+                ×
+              </button>
+            </div>
+
+            <div className="payment-summary">
+              <p>Order summary</p>
+              {paymentModal.items.map((item) => (
+                <div key={item.id} className="payment-item-row">
+                  <span>
+                    {item.name} × {item.quantity}
+                  </span>
+                  <strong>${(item.price * item.quantity).toFixed(2)}</strong>
+                </div>
+              ))}
+              <div className="payment-total-row">
+                <span>Total</span>
+                <strong>${paymentModal.total.toFixed(2)}</strong>
+              </div>
+            </div>
+
+            <button type="button" className="primary-button payment-submit" onClick={confirmPayment}>
+              Pay securely
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
