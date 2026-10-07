@@ -1,7 +1,19 @@
 import { useEffect, useMemo, useState } from 'react';
 import './App.css';
 
-const API_URL = 'http://localhost:5000/api';
+const API_URL = (() => {
+  const configuredUrl = import.meta.env.VITE_API_URL;
+  if (configuredUrl) {
+    const normalized = configuredUrl.replace(/\/$/, '');
+    return normalized.endsWith('/api') ? normalized : `${normalized}/api`;
+  }
+
+  if (typeof window !== 'undefined' && ['localhost', '127.0.0.1'].includes(window.location.hostname)) {
+    return 'http://localhost:5000/api';
+  }
+
+  return '/api';
+})();
 
 function App() {
   const [products, setProducts] = useState([]);
@@ -15,15 +27,62 @@ function App() {
   const [token, setToken] = useState(() => localStorage.getItem('ecommerce-token') || '');
   const [message, setMessage] = useState('');
   const categories = ['Audio', 'Wearables', 'Home', 'Travel'];
+  const fallbackProducts = [
+    {
+      id: 1,
+      name: 'Aurora Headphones',
+      category: 'Audio',
+      price: 149,
+      rating: 4.8,
+      image:
+        'https://images.unsplash.com/photo-1546435770-a3e426bf472b?auto=format&fit=crop&w=900&q=80',
+      description: 'Wireless over-ear headphones with studio-grade sound and deep bass.'
+    },
+    {
+      id: 2,
+      name: 'Luma Smartwatch',
+      category: 'Wearables',
+      price: 199,
+      rating: 4.7,
+      image:
+        'https://images.unsplash.com/photo-1523275335684-37898b6baf30?auto=format&fit=crop&w=900&q=80',
+      description: 'Track workouts, heart rate, and messages with a sleek titanium frame.'
+    },
+    {
+      id: 3,
+      name: 'Terra Lamp',
+      category: 'Home',
+      price: 89,
+      rating: 4.9,
+      image:
+        'https://images.unsplash.com/photo-1505693416388-ac5ce068fe85?auto=format&fit=crop&w=900&q=80',
+      description: 'Create a warm ambient glow with a minimalist, modern lighting design.'
+    },
+    {
+      id: 4,
+      name: 'Nova Backpack',
+      category: 'Travel',
+      price: 119,
+      rating: 4.6,
+      image:
+        'https://images.unsplash.com/photo-1542291026-7eec264c27ff?auto=format&fit=crop&w=900&q=80',
+      description: 'Water-resistant carry system with multiple compartments for everyday travel.'
+    }
+  ];
 
   useEffect(() => {
     const fetchProducts = async () => {
       try {
         const response = await fetch(`${API_URL}/products`);
+        if (!response.ok) {
+          throw new Error('Unable to load products.');
+        }
+
         const data = await response.json();
-        setProducts(data);
+        setProducts(Array.isArray(data) && data.length ? data : fallbackProducts);
       } catch (error) {
         console.error('Failed to load products:', error);
+        setProducts(fallbackProducts);
       }
     };
 

@@ -35,7 +35,9 @@ A full-stack shopping app built with MongoDB, Express, React, and Node.js.
 - `MONGODB_URI`: MongoDB connection string
 - `JWT_SECRET`: secret key for JSON Web Tokens
 - `STRIPE_SECRET_KEY`: Stripe secret for checkout session creation
-- `CLIENT_URL`: frontend origin for CORS
+- `CLIENT_URL`: primary frontend origin for CORS
+- `CLIENT_URLS`: comma-separated list of allowed frontend origins for deployment (useful for Vercel, Netlify, local dev)
+- `VITE_API_URL`: frontend API base URL, such as `https://your-backend-domain.com/api`
 
 ## Project structure
 
